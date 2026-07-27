@@ -18,12 +18,12 @@ PASSTHROUGH_DIRS = {
     "dist",
     "node_modules",
     "__pycache__",
-    ".git",
     ".venv",
     "venv",
     ".vscode",
     ".vs",
-    "obj"
+    "obj",
+    ".idea"
 }
 
 passthrough_dirs = []
@@ -131,13 +131,14 @@ Before returning your answer, verify that:
 
 Return ONLY valid JSON.
 
-[{{
-    "path": "",
-    "filename": "",
-    "suggested_name": "",
-    "suggested_folder": ""
-]}}
-
+[
+  {{
+    "type": "file",
+    "path": "games/dice.py",
+    "suggested_folder": "scripts/games",
+    "suggested_name": "dice_roller.py"
+  }}
+]
 Files:
 {files_json}
 
@@ -158,7 +159,7 @@ results = json.loads(response.text)
 
 for result in results:
     print(f"""
-📄 {result["filename"]}
+📄 {Path(result["path"]).name}
 
 Rename:
   → {result["suggested_name"]}
@@ -166,7 +167,7 @@ Rename:
 Move to:
   → {result["suggested_folder"]}
 ══════════════════════════════════════════════════════
-          """)
+""")
 
 apply = input("Apply changes? (Y/N): ").strip().upper()
 
@@ -181,7 +182,8 @@ if apply == "Y":
         apply_changes_diff_folder(results, folder, passthrough_dirs)
 
     elif mode == "2":
-        apply_changes_same_folder(results, folder)
+        print(json.dumps(results[0], indent=2))
+        apply_changes_same_folder(results, folder, passthrough_dirs)
 
     else:
         print("Invalid choice.")

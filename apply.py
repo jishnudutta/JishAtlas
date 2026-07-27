@@ -40,7 +40,6 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
     # Copy AI-organized files
     for result in results:
         source = folder_path / result["path"]
-
         destination = (
             new_folder
             / result["suggested_folder"]
