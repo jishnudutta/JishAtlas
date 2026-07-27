@@ -8,6 +8,24 @@ import json
 from apply import apply_changes_diff_folder 
 from apply import apply_changes_same_folder 
 
+print(r"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      ██╗██╗███████╗██╗  ██╗ █████╗ ████████╗██╗      █████╗ ███████╗
+      ██║██║██╔════╝██║  ██║██╔══██╗╚══██╔══╝██║     ██╔══██╗██╔════╝
+      ██║██║███████╗███████║███████║   ██║   ██║     ███████║███████╗
+ ██   ██║██║╚════██║██╔══██║██╔══██║   ██║   ██║     ██╔══██║╚════██║
+ ╚█████╔╝██║███████║██║  ██║██║  ██║   ██║   ███████╗██║  ██║███████║
+  ╚════╝ ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝
+
+                         J I S H A T L A S
+
+                AI-powered intelligent file organization
+
+Powered by Google Gemini | Version 0.1 Alpha  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+""")
 load_dotenv()
 
 folders = []
@@ -30,7 +48,15 @@ passthrough_dirs = []
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-folder = input("Enter the folder path: ")
+folder = input("📂 Enter the folder to organize: ").strip()
+
+if not Path(folder).exists():
+    print("❌ Folder does not exist.")
+    raise SystemExit
+
+print(f"\nSelected folder: {Path(folder).resolve()}\n")
+
+print("📂 Scanning folder...")
 
 root_dir = Path(folder)
 
@@ -74,6 +100,11 @@ for current_root, dirs, filenames in os.walk(root_dir):
             "full_path": str(path.relative_to(root_dir)),
             "contents": content
         })
+
+print(f"✓ Found {len(files)} files in {len(folders)} folders")
+print(f"📦 Passthrough directories: {len(passthrough_dirs)}")
+
+print("\n🤖 Asking Gemini to analyze your files...")
 
 files_json = json.dumps(files, indent=2, ensure_ascii=False)
 folders_json = json.dumps(folders, indent=2, ensure_ascii=False)
@@ -146,28 +177,35 @@ Existing Folders:
 {folders_json}
 """
 
-response = client.models.generate_content(
-    model="gemini-3.1-flash-lite",
-    contents=prompt,
-    config=types.GenerateContentConfig(
-        response_mime_type="application/json"
+try:
+    response = client.models.generate_content(
+        model="gemini-3.1-flash-lite",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json"
+        )
     )
-)
 
+    results = json.loads(response.text)
 
-results = json.loads(response.text)
+except json.JSONDecodeError:
+    print("❌ Gemini returned invalid JSON.")
+    raise SystemExit
+
+except Exception as e:
+    print(f"❌ AI request failed: {e}")
+    raise SystemExit
+
+print("✓ AI analysis complete!\n")
+
+print("=" * 70)
+print("Suggested Changes")
+print("=" * 70)
 
 for result in results:
-    print(f"""
-📄 {Path(result["path"]).name}
-
-Rename:
-  → {result["suggested_name"]}
-
-Move to:
-  → {result["suggested_folder"]}
-══════════════════════════════════════════════════════
-""")
+    print(f"📄 {Path(result['path']).name}")
+    print(f"   Rename → {result['suggested_name']}")
+    print(f"   Move   → {result['suggested_folder']}\n")
 
 apply = input("Apply changes? (Y/N): ").strip().upper()
 
