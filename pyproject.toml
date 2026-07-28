@@ -1,11 +1,12 @@
 [project]
 name = "jishatlas"
 version = "0.1.0"
-description = "Add your description here"
+description = "JishAtlas is an AI-powered knowledge engine that understands, organizes, and indexes your files using content instead of filenames. Built because I got tired of digging through messy folders."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "google-genai>=2.14.0",
+    "llama-cpp-python>=0.3.34",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
 ]

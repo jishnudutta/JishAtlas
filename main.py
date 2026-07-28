@@ -89,7 +89,7 @@ for current_root, dirs, filenames in os.walk(root_dir):
         path = Path(current_root) / filename
 
         try:
-            MAX_CHARS = 5000
+            MAX_CHARS = 500
             content = path.read_text(encoding="utf-8")[:MAX_CHARS]
         except UnicodeDecodeError:
             content = None
