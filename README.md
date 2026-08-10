@@ -155,7 +155,7 @@ On first use of Local AI, JishAtlas will download the required model automatical
 If you want to run JishAtlas directly from Python:
 
 ```bash
-git clone https://github.com/your-username/JishAtlas.git
+git clone https://github.com/jishnudutta/JishAtlas.git
 cd JishAtlas
 
 python -m venv .venv
