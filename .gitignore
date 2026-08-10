@@ -1,16 +1,17 @@
-# Virtual environment
-.venv/
-
-# Environment variables
+# Environment
 .env
 
-# Python cache
+# Local AI models
+models/
+
+# Python
 __pycache__/
 *.py[cod]
 
-# VS Code
-.vscode/
+# Virtual environments
+.venv/
+venv/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Build artifacts
+build/
+dist/

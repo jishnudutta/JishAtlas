@@ -1,5 +1,6 @@
 from pathlib import Path
 from shutil import copy2, copytree, rmtree
+import hashlib
 
 
 def print_summary(stats, output_folder: Path):
@@ -9,6 +10,7 @@ def print_summary(stats, output_folder: Path):
 
     print(f"📄 Files organized      : {stats['files_copied']}")
     print(f"📁 Folders created      : {len(stats['folders_created'])}")
+    print(f"🗂️  Projects moved       : {stats['projects_copied']}")
     print(f"📦 Passthrough copied   : {stats['passthrough_copied']}")
     print(f"❌ Errors               : {stats['errors']}")
 
@@ -23,28 +25,146 @@ def print_summary(stats, output_folder: Path):
         print("⚠️ Organization completed with errors.")
 
 
+def _safe_source(folder_path: Path, rel_path: Path) -> Path | None:
+    """Return the real source path, or None if it escapes folder_path."""
+    source = folder_path / rel_path
+
+    try:
+        resolved = source.resolve()
+        root = folder_path.resolve()
+    except OSError:
+        return None
+
+    if resolved != root and root not in resolved.parents:
+        return None
+
+    return source
+
+
+def _safe_destination(new_folder: Path, suggested_folder, name) -> Path | None:
+    """Return the destination path, or None if it escapes new_folder."""
+    destination = new_folder / suggested_folder / name
+
+    try:
+        resolved = destination.resolve()
+        root = new_folder.resolve()
+    except OSError:
+        return None
+
+    if resolved != root and root not in resolved.parents:
+        return None
+
+    return destination
+
+
 def create_organized_copy(results, main_dir, passthrough_dirs):
     folder_path = Path(main_dir)
     parent_dir = folder_path.parent
 
     new_folder = parent_dir / f"{folder_path.name}_Organised"
+
+    # Rebuild from scratch: never merge stale content from a previous run
+    if new_folder.exists():
+        rmtree(new_folder)
     new_folder.mkdir(parents=True, exist_ok=True)
 
     stats = {
         "files_copied": 0,
         "folders_created": set(),
+        "projects_copied": 0,
         "passthrough_copied": 0,
         "errors": 0,
     }
 
+    project_paths = [
+        Path(result["path"])
+        for result in results
+        if result.get("type") == "project" and result.get("path")
+    ]
+
     # Copy AI-organized files
     for result in results:
-        source = folder_path / result["path"]
-        destination = (
-            new_folder
-            / result["suggested_folder"]
-            / result["suggested_name"]
+        path_str = result.get("path")
+
+        if not path_str:
+            stats["errors"] += 1
+            print("Failed to copy: result is missing a path")
+            continue
+
+        rel_path = Path(path_str)
+
+        # Files inside passthrough dirs are copied with the whole directory
+        if any(rel_path.is_relative_to(p) for p in passthrough_dirs):
+            continue
+
+        # Reject paths that escape the folder being organized
+        source = _safe_source(folder_path, rel_path)
+
+        if source is None:
+            stats["errors"] += 1
+            print(
+                f"Failed to copy {result['path']}: path escapes the folder being organized"
+            )
+            continue
+
+        # Whole projects move as a single unit, keeping their name
+        if result.get("type") == "project":
+            suggested_folder = result.get("suggested_folder")
+
+            if not suggested_folder:
+                stats["errors"] += 1
+                print(
+                    f"Failed to copy project {source}: result is missing a suggested folder"
+                )
+                continue
+
+            destination = _safe_destination(
+                new_folder,
+                suggested_folder,
+                rel_path.name,
+            )
+
+            if destination is None:
+                stats["errors"] += 1
+                print(
+                    f"Failed to copy project {source}: destination escapes the organized folder"
+                )
+                continue
+
+            try:
+                copytree(source, destination, dirs_exist_ok=True)
+                stats["projects_copied"] += 1
+
+            except Exception as e:
+                stats["errors"] += 1
+                print(f"Failed to copy project {source}: {e}")
+
+            continue
+
+        # Individual files inside a project root travel with the project
+        if any(rel_path.is_relative_to(p) for p in project_paths):
+            continue
+
+        suggested_folder = result.get("suggested_folder")
+        suggested_name = result.get("suggested_name")
+
+        if not suggested_folder or not suggested_name:
+            stats["errors"] += 1
+            print(
+                f"Failed to copy {source}: result is missing a suggested folder or name"
+            )
+            continue
+
+        destination = _safe_destination(
+            new_folder,
+            suggested_folder,
+            suggested_name,
         )
+
+        if destination is None:
+            stats["errors"] += 1
+            print(f"Failed to copy {source}: destination escapes the organized folder")
+            continue
 
         try:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -58,8 +178,11 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
             stats["errors"] += 1
             print(f"Failed to copy {source}: {e}")
 
-    # Copy passthrough directories
+    # Copy passthrough directories (node_modules, .venv, .git, ...)
     for directory in passthrough_dirs:
+        # Passthrough dirs nested inside a project root travel with the project
+        if any(directory.is_relative_to(p) for p in project_paths):
+            continue
 
         source = folder_path / directory
         destination = new_folder / directory
@@ -75,8 +198,62 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
     return new_folder, stats
 
 
-def apply_changes_diff_folder(results, main_dir, passthrough_dirs):
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
 
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def _file_hash_counts(root: Path) -> dict:
+    counts = {}
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+
+        try:
+            digest = _hash_file(path)
+        except OSError:
+            continue
+
+        counts[digest] = counts.get(digest, 0) + 1
+
+    return counts
+
+
+def verify_complete_copy(source_dir: Path, target_dir: Path) -> list:
+    """Return paths of files in source_dir that are missing from target_dir.
+
+    Files may be renamed or reorganized in the copy, so items are matched by
+    content hash instead of by path.
+    """
+    target_counts = _file_hash_counts(target_dir)
+
+    missing = []
+
+    for path in source_dir.rglob("*"):
+        if not path.is_file():
+            continue
+
+        try:
+            digest = _hash_file(path)
+        except OSError:
+            missing.append(str(path))
+            continue
+
+        if target_counts.get(digest, 0) > 0:
+            target_counts[digest] -= 1
+        else:
+            missing.append(str(path))
+
+    return missing
+
+
+def apply_changes_diff_folder(results, main_dir, passthrough_dirs):
     new_folder, stats = create_organized_copy(
         results,
         main_dir,
@@ -87,7 +264,6 @@ def apply_changes_diff_folder(results, main_dir, passthrough_dirs):
 
 
 def apply_changes_same_folder(results, main_dir, passthrough_dirs):
-
     folder_path = Path(main_dir)
 
     new_folder, stats = create_organized_copy(
@@ -96,10 +272,58 @@ def apply_changes_same_folder(results, main_dir, passthrough_dirs):
         passthrough_dirs,
     )
 
-    if stats["errors"] == 0:
-        rmtree(folder_path)
-        new_folder.rename(folder_path)
-        print_summary(stats, folder_path)
-    else:
+    if stats["errors"] > 0:
         print("\nOrganization aborted because errors occurred.")
         print("The original folder has NOT been modified.")
+        return
+
+    # Safety check: never touch the original unless every file in it exists
+    # in the organized copy (matched by content, not by path).
+    print("\n🔍 Verifying the organized copy is complete...")
+    missing = verify_complete_copy(folder_path, new_folder)
+
+    if missing:
+        print("\n❌ Safety check failed: the organized copy is missing files.")
+        for path in missing[:10]:
+            print(f"   {path}")
+        print("\nThe original folder has NOT been modified.")
+        return
+
+    # Swap the organized copy into place. The original is only deleted after
+    # the swap has fully succeeded, so nothing is lost if anything fails.
+    backup = folder_path.with_name(f"{folder_path.name}.jishatlas_backup")
+
+    if backup.exists():
+        try:
+            rmtree(backup)
+        except Exception as e:
+            print(f"\n⚠️ Could not remove stale backup {backup}: {e}")
+
+    try:
+        folder_path.rename(backup)
+        new_folder.rename(folder_path)
+    except Exception as e:
+        print(f"\n❌ Failed to swap folders: {e}")
+
+        # Try to restore the original in place
+        if backup.exists() and not folder_path.exists():
+            try:
+                backup.rename(folder_path)
+                print("The original folder has been restored.")
+            except Exception:
+                print(f"Your files are safe in: {backup}")
+        elif folder_path.exists():
+            print("The original folder is still in place and has NOT been modified.")
+        elif backup.exists():
+            print(f"Your files are safe in: {backup}")
+
+        print("The original folder has NOT been replaced.")
+        return
+
+    try:
+        rmtree(backup)
+    except Exception as e:
+        print(f"\n⚠️ Could not remove the backup folder: {e}")
+        print(f"Your files are safe in: {backup}")
+
+    print_summary(stats, folder_path)
