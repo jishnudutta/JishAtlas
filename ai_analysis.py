@@ -47,6 +47,11 @@ RULES
 12. For source code and text files, use lowercase_with_underscores for suggested names.
 13. Every final destination must be unique.
 14. Never use absolute paths.
+15. The output MUST include every file from INPUT FILES. A file inside a
+    project root is covered by that project's entry.
+16. Omitting a file means it would be left behind when the changes are
+    applied. Never omit a file because you are unsure - include it with
+    your best guess for its folder.
 
 PROJECTS
 
@@ -90,6 +95,9 @@ VALIDATION
 
 Before responding, verify:
 - Every input item appears exactly once.
+- Every file in INPUT FILES appears in the output, either as its own
+  "file" entry or inside a "project" entry.
+- The output array is not empty when INPUT FILES is not empty.
 - No two items have the same final destination.
 - File extensions are unchanged.
 - All suggested folders are relative paths.
@@ -273,7 +281,7 @@ def load_local_model():
 
 
 def sanitize_results(results, files):
-    """Repair AI-suggested paths that do not match a real scanned file.
+    """Repair or drop AI-suggested paths that do not match a real scanned file.
 
     The local model occasionally drops path components on larger folders
     (e.g. it returns "dir_1/nested_1.txt" when the real scanned path is
@@ -282,8 +290,11 @@ def sanitize_results(results, files):
 
     When the basename matches exactly one scanned file, the path is
     rewritten to the real one so the file gets organized correctly.
-    Ambiguous or unmatched paths are left untouched and will be reported
-    as errors by the apply step.
+    Paths that still cannot be matched (ambiguous basename, invented name,
+    or a missing path) are dropped: keeping them would only surface as
+    "the AI suggested a path that was not found" errors during the apply
+    step. The real file is then added back by complete_results() in its
+    original folder, so nothing is lost.
 
     Returns a new list; the input list is not modified.
     """
@@ -296,16 +307,20 @@ def sanitize_results(results, files):
         by_name.setdefault(f.name.lower(), []).append(f.full_path)
 
     repaired = 0
+    dropped = 0
     cleaned = []
 
     for result in results:
-        path = result.get("path")
-
         # Projects are left untouched: their paths must stay relative to the
         # folder being organized, which apply.py relies on. Only file paths
         # are repaired here.
-        if result.get("type") == "project" or path is None:
+        if result.get("type") == "project":
             cleaned.append(result)
+            continue
+
+        path = result.get("path")
+        if not path:
+            dropped += 1
             continue
 
         norm = Path(path).as_posix().lower()
@@ -317,8 +332,10 @@ def sanitize_results(results, files):
         if len(matches) == 1:
             result = {**result, "path": matches[0]}
             repaired += 1
+            cleaned.append(result)
+            continue
 
-        cleaned.append(result)
+        dropped += 1
 
     if repaired:
         console.print(
@@ -326,7 +343,78 @@ def sanitize_results(results, files):
             "the scanned files.[/yellow]"
         )
 
+    if dropped:
+        console.print(
+            f"[yellow]⚠️  Dropped {dropped} AI-suggested path(s) that could "
+            "not be matched to a scanned file; the real files will be kept "
+            "in their original folders.[/yellow]"
+        )
+
     return cleaned
+
+
+# --------------------------------------------------
+# Result completion
+# --------------------------------------------------
+
+
+def complete_results(results, files):
+    """Add back any scanned file the AI omitted from its analysis.
+
+    Small models routinely drop files when a folder contains many of them.
+    An omitted file would fail the apply-step safety check and block an
+    in-place organization, so each omitted file is added back with its
+    current folder and name. The organized copy is then always complete
+    and no data is ever lost.
+
+    Files that live inside a project root returned as a "project" travel
+    with the project copy, so they are skipped here.
+
+    Returns a new list; the input list is not modified.
+    """
+    covered = set()
+    covered_projects = []
+
+    for result in results:
+        path = result.get("path")
+        if not path:
+            continue
+        if result.get("type") == "project":
+            covered_projects.append(Path(path))
+        else:
+            covered.add(Path(path).as_posix().lower())
+
+    added = []
+
+    for f in files:
+        rel = Path(f.full_path)
+        norm = rel.as_posix().lower()
+
+        if norm in covered:
+            continue
+
+        # Inside a project root that is already returned as a "project":
+        # the project copy carries it, no individual entry needed.
+        if any(rel.is_relative_to(p) for p in covered_projects):
+            continue
+
+        added.append(
+            {
+                "type": "file",
+                "path": f.full_path,
+                "suggested_folder": f.parent_folder or ".",
+                "suggested_name": f.name,
+            }
+        )
+        covered.add(norm)
+
+    if added:
+        console.print(
+            f"[yellow]⚠️  The AI omitted {len(added)} file(s); they will be "
+            "kept in their original folders.[/yellow]"
+        )
+
+    return results + added
 
 
 # --------------------------------------------------
@@ -418,6 +506,7 @@ def categorize_gemini(files, folders, passthrough_dirs, project_roots):
         raise SystemExit
 
     results = sanitize_results(results, files)
+    results = complete_results(results, files)
     print_results(results)
 
     return results
@@ -477,6 +566,7 @@ def categorize_local(files, folders, passthrough_dirs, project_roots):
         raise SystemExit
 
     results = sanitize_results(results, files)
+    results = complete_results(results, files)
     print_results(results)
 
     return results

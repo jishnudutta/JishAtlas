@@ -18,7 +18,12 @@ except Exception:
 from apply import apply_changes_diff_folder
 from apply import apply_changes_same_folder
 from input import get_folder
-from input import select_ai_backend, ask_apply_changes, select_organization_mode
+from input import (
+    select_ai_backend,
+    ask_apply_changes,
+    ask_run_again,
+    select_organization_mode,
+)
 from scanner import scan_directory
 from scanner import detect_projects
 from welcome import show
@@ -41,47 +46,71 @@ from ai_analysis import categorize_gemini, categorize_local
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-show()
+def main():
+    show()
 
-folder = get_folder()
+    try:
+        while True:
+            folder = get_folder()
 
-files, folders, passthrough_dirs = scan_directory(folder)
-project_roots = detect_projects(folder)
+            # The user quit from the folder prompt.
+            if folder is None:
+                break
 
-backend = select_ai_backend()
+            files, folders, passthrough_dirs = scan_directory(folder)
+            project_roots = detect_projects(folder)
 
-if backend == "gemini":
-    setup_gemini_api_key()
-    results = categorize_gemini(
-        files,
-        folders,
-        passthrough_dirs,
-        project_roots,
-    )
-elif backend == "local":
-    results = categorize_local(
-        files,
-        folders,
-        passthrough_dirs,
-        project_roots,
-    )
+            backend = select_ai_backend()
 
-organization_mode = select_organization_mode()
+            if backend == "gemini":
+                setup_gemini_api_key()
+                results = categorize_gemini(
+                    files,
+                    folders,
+                    passthrough_dirs,
+                    project_roots,
+                )
+            elif backend == "local":
+                results = categorize_local(
+                    files,
+                    folders,
+                    passthrough_dirs,
+                    project_roots,
+                )
 
-apply_changes = ask_apply_changes()
+            organization_mode = select_organization_mode()
 
-if apply_changes:
-    if organization_mode == "copy":
-        apply_changes_diff_folder(
-            results,
-            folder,
-            passthrough_dirs,
-        )
-    else:
-        apply_changes_same_folder(
-            results,
-            folder,
-            passthrough_dirs,
-        )
-else:
-    print("Operation cancelled.")
+            apply_changes = ask_apply_changes()
+
+            if apply_changes:
+                if organization_mode == "copy":
+                    apply_changes_diff_folder(
+                        results,
+                        folder,
+                        passthrough_dirs,
+                    )
+                else:
+                    apply_changes_same_folder(
+                        results,
+                        folder,
+                        passthrough_dirs,
+                    )
+            else:
+                print("Operation cancelled.")
+
+            # Keep the program open instead of closing abruptly after the
+            # results: let the user organize another folder or quit.
+            if not ask_run_again():
+                break
+
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl+C or exhausted piped input: exit quietly instead of a
+        # traceback. SystemExit is deliberately not caught here - it is
+        # raised for graceful exits (invalid folder, missing API key).
+        pass
+
+    print("\n👋 Thanks for using JishAtlas! Goodbye.")
+
+
+if __name__ == "__main__":
+    main()

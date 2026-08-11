@@ -56,7 +56,14 @@ def setup_gemini_api_key():
 
 
 def get_folder():
-    folder = Prompt.ask("📂 Enter the folder to organize").strip()
+    folder = Prompt.ask(
+        "📂 Enter the folder to organize (or 'q' to quit)"
+    ).strip()
+
+    # The user can quit from the folder prompt.
+    if folder.lower() in ("q", "quit", "exit"):
+        return None
+
     root_dir = Path(folder)
 
     if not root_dir.exists():
@@ -70,6 +77,14 @@ def get_folder():
     console.print(f"\nSelected folder: [cyan]{root_dir.resolve()}[/cyan]\n")
 
     return root_dir
+
+
+def ask_run_again():
+    """Ask whether to organize another folder (default: yes)."""
+    return Confirm.ask(
+        "\n🔄 Organize another folder?",
+        default=True,
+    )
 
 
 def select_ai_backend():

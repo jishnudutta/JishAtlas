@@ -9,6 +9,7 @@ import ai_analysis
 from ai_analysis import (
     LOCAL_JSON_SCHEMA,
     build_prompt,
+    complete_results,
     create_local_grammar,
     prepare_ai_data,
     sanitize_results,
@@ -140,19 +141,58 @@ class TestSanitizeResults:
         assert cleaned[0]["path"] == "dir_1/sub/nested_1.txt"
         assert cleaned[1]["path"] == "dir_1/sub/binary_1.dat"
 
-    def test_ambiguous_basename_left_untouched(self):
+    def test_ambiguous_basename_dropped(self):
         files = self._files() + [
             FakeFile("nested_1.txt", "other/nested_1.txt", "other", None),
         ]
         results = [{"type": "file", "path": "dir_1/nested_1.txt", "suggested_folder": "Data"}]
         cleaned = sanitize_results(results, files)
-        # Ambiguous (two files named nested_1.txt) - must not guess.
-        assert cleaned[0]["path"] == "dir_1/nested_1.txt"
+        # Ambiguous (two files named nested_1.txt) - must not guess. The
+        # entry is dropped; complete_results adds both real files back.
+        assert cleaned == []
 
-    def test_missing_path_kept(self):
+    def test_missing_path_dropped(self):
         results = [{"type": "file", "path": "nonexistent.txt", "suggested_folder": "Data"}]
         cleaned = sanitize_results(results, self._files())
-        assert cleaned[0]["path"] == "nonexistent.txt"
+        assert cleaned == []
+
+    def test_dropped_paths_backfilled_by_complete_results(self):
+        # The reported bug: AI returned "README.md" when two scanned files
+        # share that name, so the basename is ambiguous. sanitize drops it,
+        # complete_results adds both real files back in their folders.
+        files = [
+            FakeFile("README.md", "docs/README.md", "docs", None),
+            FakeFile("README.md", "proj/README.md", "proj", None),
+            FakeFile("notes.txt", "notes.txt", ".", None),
+        ]
+        results = [
+            {"type": "file", "path": "README.md", "suggested_folder": "Docs", "suggested_name": "README.md"},
+            {"type": "file", "path": "notes.txt", "suggested_folder": "Notes", "suggested_name": "notes.txt"},
+        ]
+        cleaned = sanitize_results(results, files)
+        assert len(cleaned) == 1  # only notes.txt survives
+        completed = complete_results(cleaned, files)
+        paths = {r["path"] for r in completed}
+        assert paths == {"docs/README.md", "proj/README.md", "notes.txt"}
+        docs = next(r for r in completed if r["path"] == "docs/README.md")
+        assert docs["suggested_folder"] == "docs"
+        assert docs["suggested_name"] == "README.md"
+
+    def test_projects_survive_when_file_paths_dropped(self):
+        # Project entries must never be touched, even when file paths are
+        # dropped in the same batch.
+        files = [
+            FakeFile("a.txt", "a.txt", ".", None),
+            FakeFile("main.py", "app/src/main.py", "app/src", None),
+        ]
+        results = [
+            {"type": "project", "path": "app", "suggested_folder": "Code"},
+            {"type": "file", "path": "nope.txt", "suggested_folder": "X"},
+        ]
+        cleaned = sanitize_results(results, files)
+        assert cleaned == [
+            {"type": "project", "path": "app", "suggested_folder": "Code"}
+        ]
 
     def test_windows_backslashes_repaired(self):
         files = self._files()
@@ -171,4 +211,77 @@ class TestSanitizeResults:
         results = [{"type": "file", "path": "dir_1/nested_1.txt", "suggested_folder": "Data"}]
         before = [dict(r) for r in results]
         sanitize_results(results, self._files())
+        assert results == before
+
+
+class TestCompleteResults:
+    def _files(self):
+        return [
+            FakeFile("a.txt", "a.txt", ".", None),
+            FakeFile("notes.txt", "docs/notes.txt", "docs", None),
+            FakeFile("main.py", "proj/src/main.py", "proj/src", None),
+        ]
+
+    def test_omitted_files_added_in_original_folder(self):
+        # The AI only returned a.txt; docs/notes.txt and proj/src/main.py
+        # were omitted and must be added back with their current folder.
+        results = [
+            {
+                "type": "file",
+                "path": "a.txt",
+                "suggested_folder": "Root",
+                "suggested_name": "a.txt",
+            },
+        ]
+        completed = complete_results(results, self._files())
+        assert len(completed) == 3
+
+        notes = next(r for r in completed if r["path"] == "docs/notes.txt")
+        assert notes["type"] == "file"
+        assert notes["suggested_folder"] == "docs"
+        assert notes["suggested_name"] == "notes.txt"
+
+    def test_existing_results_not_duplicated(self):
+        results = [
+            {
+                "type": "file",
+                "path": "a.txt",
+                "suggested_folder": "Root",
+                "suggested_name": "a.txt",
+            },
+        ]
+        completed = complete_results(results, self._files())
+        assert sum(1 for r in completed if r["path"] == "a.txt") == 1
+
+    def test_root_level_file_kept_at_organised_root(self):
+        # A root-level file (parent_folder ".") omitted by the AI is added
+        # back with the organised folder root as its destination.
+        results = []
+        completed = complete_results(results, self._files())
+        root_file = next(r for r in completed if r["path"] == "a.txt")
+        assert root_file["suggested_folder"] == "."
+        assert root_file["suggested_name"] == "a.txt"
+
+    def test_files_inside_returned_project_skipped(self):
+        # proj/src/main.py lives inside the returned project "proj", so it
+        # travels with the project copy and needs no individual entry.
+        results = [
+            {"type": "project", "path": "proj", "suggested_folder": "Code"},
+        ]
+        completed = complete_results(results, self._files())
+        assert sum(1 for r in completed if r["path"] == "proj/src/main.py") == 0
+        assert sum(1 for r in completed if r["path"] == "a.txt") == 1
+        assert sum(1 for r in completed if r["path"] == "docs/notes.txt") == 1
+
+    def test_input_not_mutated(self):
+        results = [
+            {
+                "type": "file",
+                "path": "a.txt",
+                "suggested_folder": "Root",
+                "suggested_name": "a.txt",
+            },
+        ]
+        before = [dict(r) for r in results]
+        complete_results(results, self._files())
         assert results == before

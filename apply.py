@@ -320,9 +320,19 @@ def apply_changes_same_folder(results, main_dir, passthrough_dirs):
 
     if missing:
         print("\n❌ Safety check failed: the organized copy is missing files.")
+        print("This usually means the AI analysis omitted some files when")
+        print("the folder was large. The original folder was left untouched")
+        print("to protect your data.")
+        print()
         for path in missing[:10]:
             print(f"   {path}")
+        if len(missing) > 10:
+            print(f"   ... and {len(missing) - 10} more")
         print("\nThe original folder has NOT been modified.")
+        print("\nYou can:")
+        print("  • Re-run JishAtlas - AI results vary between runs.")
+        print("  • Use 'Create Organized Copy' mode, which never touches the original.")
+        print("  • Organize the folder in smaller batches.")
         return
 
     # Swap the organized copy into place. The original is only deleted after

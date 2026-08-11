@@ -1,5 +1,9 @@
 # JishAtlas
 
+<p align="center">
+  <img src="assets/icon.png" alt="JishAtlas" width="128" />
+</p>
+
 ### AI-powered intelligent file organization
 
 **Local AI • Google Gemini • Privacy First**

@@ -74,12 +74,14 @@ class TestExeFullFlow:
         (source / "node_modules" / "pkg").mkdir()
         (source / "node_modules" / "pkg" / "index.js").write_text("x")
 
-        result = _run_exe([str(source), "1", "2", "y"])
+        # The final "n" answers the "Organize another folder?" prompt so
+        # the app exits cleanly instead of hitting EOF on the piped input.
+        result = _run_exe([str(source), "1", "2", "y", "n"])
 
         assert result.returncode == 0, result.stdout + result.stderr
-        # The local model is non-deterministic and may omit a file on some
-        # runs, in which case the summary warns instead of saying "completed
-        # successfully". Assert on the stable parts of the output.
+        # The local model may omit a file on some runs, but ai_analysis
+        # fills those gaps back in (complete_results), so the organized
+        # copy is always complete. Assert on the stable parts of the output.
         assert "Files organized" in result.stdout
         assert "Traceback" not in result.stdout + result.stderr
 

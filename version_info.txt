@@ -15,7 +15,8 @@ VSVersionInfo(
                 StringTable(
                     '040904B0',
                     [
-                        StringStruct('CompanyName', 'JishWorks'),
+                        StringStruct('CompanyName', 'JishWorks-Jishnu Dutta'),
+                        StringStruct('LegalCopyright', 'Copyright (c) 2026 JishWorks - Jishnu Dutta'),
                         StringStruct('FileDescription', 'JishAtlas - AI File Organization'),
                         StringStruct('FileVersion', '0.1.0.0'),
                         StringStruct('InternalName', 'JishAtlas'),
