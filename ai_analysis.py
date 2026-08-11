@@ -268,6 +268,68 @@ def load_local_model():
     return llm
 
 # --------------------------------------------------
+# Path validation
+# --------------------------------------------------
+
+
+def sanitize_results(results, files):
+    """Repair AI-suggested paths that do not match a real scanned file.
+
+    The local model occasionally drops path components on larger folders
+    (e.g. it returns "dir_1/nested_1.txt" when the real scanned path is
+    "dir_1/sub/nested_1.txt"). Such paths would fail during the copy step
+    with a confusing "Failed to copy ... [WinError 2]" error.
+
+    When the basename matches exactly one scanned file, the path is
+    rewritten to the real one so the file gets organized correctly.
+    Ambiguous or unmatched paths are left untouched and will be reported
+    as errors by the apply step.
+
+    Returns a new list; the input list is not modified.
+    """
+    exact_paths = {
+        Path(f.full_path).as_posix().lower(): f.full_path
+        for f in files
+    }
+    by_name = {}
+    for f in files:
+        by_name.setdefault(f.name.lower(), []).append(f.full_path)
+
+    repaired = 0
+    cleaned = []
+
+    for result in results:
+        path = result.get("path")
+
+        # Projects are left untouched: their paths must stay relative to the
+        # folder being organized, which apply.py relies on. Only file paths
+        # are repaired here.
+        if result.get("type") == "project" or path is None:
+            cleaned.append(result)
+            continue
+
+        norm = Path(path).as_posix().lower()
+        if norm in exact_paths:
+            cleaned.append(result)
+            continue
+
+        matches = by_name.get(Path(path).name.lower(), [])
+        if len(matches) == 1:
+            result = {**result, "path": matches[0]}
+            repaired += 1
+
+        cleaned.append(result)
+
+    if repaired:
+        console.print(
+            f"[yellow]⚠️  Repaired {repaired} AI-suggested path(s) to match "
+            "the scanned files.[/yellow]"
+        )
+
+    return cleaned
+
+
+# --------------------------------------------------
 # Shared output
 # --------------------------------------------------
 
@@ -355,6 +417,7 @@ def categorize_gemini(files, folders, passthrough_dirs, project_roots):
         print(f"❌ AI request failed: {e}")
         raise SystemExit
 
+    results = sanitize_results(results, files)
     print_results(results)
 
     return results
@@ -413,6 +476,7 @@ def categorize_local(files, folders, passthrough_dirs, project_roots):
         print(f"❌ AI request failed: {e}")
         raise SystemExit
 
+    results = sanitize_results(results, files)
     print_results(results)
 
     return results

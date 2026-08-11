@@ -8,6 +8,7 @@ from apply import (
     _hash_file,
     _safe_destination,
     _safe_source,
+    apply_changes_diff_folder,
     apply_changes_same_folder,
     create_organized_copy,
     verify_complete_copy,
@@ -292,3 +293,48 @@ class TestApplySameFolder:
         # Original untouched.
         assert (source / "a.txt").read_text() == "aaa"
         assert (source / "keep.bin").read_bytes() == b"precious"
+
+    def test_copy_mode_warns_when_ai_omits_files(self, tmp_path, capsys):
+        """If the AI output omits a file, copy mode must not silently declare
+        success - it should warn about the missing files."""
+        source = tmp_path / "messy"
+        source.mkdir()
+        (source / "a.txt").write_text("aaa")
+        (source / "omitted.bin").write_bytes(b"precious")
+
+        results = [
+            {
+                "type": "file",
+                "path": "a.txt",
+                "suggested_folder": "A",
+                "suggested_name": "a.txt",
+            },
+        ]
+
+        apply_changes_diff_folder(results, source, [])
+
+        out = capsys.readouterr().out
+        assert "omitted.bin" in out
+        assert "1 file(s) were not copied" in out
+        # The original folder is untouched in copy mode.
+        assert (source / "omitted.bin").read_bytes() == b"precious"
+
+    def test_copy_mode_silent_success_when_complete(self, tmp_path, capsys):
+        source = tmp_path / "messy"
+        source.mkdir()
+        (source / "a.txt").write_text("aaa")
+
+        results = [
+            {
+                "type": "file",
+                "path": "a.txt",
+                "suggested_folder": "A",
+                "suggested_name": "a.txt",
+            },
+        ]
+
+        apply_changes_diff_folder(results, source, [])
+
+        out = capsys.readouterr().out
+        assert "Organization completed successfully!" in out
+        assert "were not copied" not in out

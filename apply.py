@@ -3,7 +3,7 @@ from shutil import copy2, copytree, rmtree
 import hashlib
 
 
-def print_summary(stats, output_folder: Path):
+def print_summary(stats, output_folder: Path, missing_count: int = 0):
     print("\n" + "=" * 60)
     print("                 JishAtlas Summary")
     print("=" * 60)
@@ -19,7 +19,12 @@ def print_summary(stats, output_folder: Path):
 
     print("=" * 60)
 
-    if stats["errors"] == 0:
+    if missing_count > 0:
+        print(
+            f"⚠️ Organization completed, but {missing_count} file(s) were not "
+            "copied because the AI did not include them."
+        )
+    elif stats["errors"] == 0:
         print("✅ Organization completed successfully!")
     else:
         print("⚠️ Organization completed with errors.")
@@ -104,6 +109,16 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
             stats["errors"] += 1
             print(
                 f"Failed to copy {result['path']}: path escapes the folder being organized"
+            )
+            continue
+
+        # Reject AI-suggested paths that do not correspond to a real file
+        # (the AI can drop path components or invent names on large folders).
+        if not source.exists():
+            stats["errors"] += 1
+            print(
+                f"Failed to copy {result['path']}: the AI suggested a path that "
+                "was not found in the folder"
             )
             continue
 
@@ -242,7 +257,9 @@ def verify_complete_copy(source_dir: Path, target_dir: Path) -> list:
         try:
             digest = _hash_file(path)
         except OSError:
-            missing.append(str(path))
+            # Unreadable files (locked, permission denied, broken links) were
+            # already counted as copy errors, so they are not reported as
+            # "missing" here.
             continue
 
         if target_counts.get(digest, 0) > 0:
@@ -254,13 +271,32 @@ def verify_complete_copy(source_dir: Path, target_dir: Path) -> list:
 
 
 def apply_changes_diff_folder(results, main_dir, passthrough_dirs):
+    folder_path = Path(main_dir)
+
     new_folder, stats = create_organized_copy(
         results,
         main_dir,
         passthrough_dirs,
     )
 
-    print_summary(stats, new_folder)
+    # The AI can omit files entirely when a folder has many of them. Detect
+    # any missing files so an incomplete copy is never mistaken for a
+    # complete organization. The original folder is untouched in copy mode,
+    # so this is a warning rather than an abort.
+    print("\n🔍 Checking the organized copy is complete...")
+    missing = verify_complete_copy(folder_path, new_folder)
+
+    if missing:
+        print(
+            f"\n⚠️ The organized copy is missing {len(missing)} file(s) that "
+            "the AI did not include."
+        )
+        for path in missing[:10]:
+            print(f"   {path}")
+        if len(missing) > 10:
+            print(f"   ... and {len(missing) - 10} more")
+
+    print_summary(stats, new_folder, missing_count=len(missing))
 
 
 def apply_changes_same_folder(results, main_dir, passthrough_dirs):

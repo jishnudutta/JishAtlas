@@ -11,6 +11,7 @@ from ai_analysis import (
     build_prompt,
     create_local_grammar,
     prepare_ai_data,
+    sanitize_results,
 )
 
 
@@ -98,3 +99,76 @@ class TestLocalSchema:
         # Creating the grammar object does not load the model.
         grammar = create_local_grammar()
         assert grammar is not None
+
+
+class TestSanitizeResults:
+    def _files(self):
+        return [
+            FakeFile("nested_1.txt", "dir_1/sub/nested_1.txt", "dir_1/sub", None),
+            FakeFile("binary_1.dat", "dir_1/sub/binary_1.dat", "dir_1/sub", None),
+            FakeFile("notes.txt", "notes.txt", ".", None),
+            FakeFile("readme.md", "proj/readme.md", "proj", None),
+        ]
+
+    def test_exact_paths_unchanged(self):
+        results = [
+            {"type": "file", "path": "notes.txt", "suggested_folder": "Docs"},
+            {
+                "type": "file",
+                "path": "proj/readme.md",
+                "suggested_folder": "Docs",
+            },
+        ]
+        cleaned = sanitize_results(results, self._files())
+        assert cleaned == results
+
+    def test_truncated_path_repaired_by_unique_basename(self):
+        # The AI dropped the 'sub' component - this is the reported bug.
+        results = [
+            {
+                "type": "file",
+                "path": "dir_1/nested_1.txt",
+                "suggested_folder": "Data",
+            },
+            {
+                "type": "file",
+                "path": "dir_1/binary_1.dat",
+                "suggested_folder": "Data",
+            },
+        ]
+        cleaned = sanitize_results(results, self._files())
+        assert cleaned[0]["path"] == "dir_1/sub/nested_1.txt"
+        assert cleaned[1]["path"] == "dir_1/sub/binary_1.dat"
+
+    def test_ambiguous_basename_left_untouched(self):
+        files = self._files() + [
+            FakeFile("nested_1.txt", "other/nested_1.txt", "other", None),
+        ]
+        results = [{"type": "file", "path": "dir_1/nested_1.txt", "suggested_folder": "Data"}]
+        cleaned = sanitize_results(results, files)
+        # Ambiguous (two files named nested_1.txt) - must not guess.
+        assert cleaned[0]["path"] == "dir_1/nested_1.txt"
+
+    def test_missing_path_kept(self):
+        results = [{"type": "file", "path": "nonexistent.txt", "suggested_folder": "Data"}]
+        cleaned = sanitize_results(results, self._files())
+        assert cleaned[0]["path"] == "nonexistent.txt"
+
+    def test_windows_backslashes_repaired(self):
+        files = self._files()
+        results = [{"type": "file", "path": "dir_1\\nested_1.txt", "suggested_folder": "Data"}]
+        cleaned = sanitize_results(results, files)
+        assert cleaned[0]["path"] == "dir_1/sub/nested_1.txt"
+
+    def test_project_paths_left_untouched(self):
+        # Project paths must stay relative to the organized folder (apply.py
+        # relies on that), so the sanitizer must not rewrite them.
+        results = [{"type": "project", "path": "WeatherApp", "suggested_folder": "Programming"}]
+        cleaned = sanitize_results(results, [])
+        assert cleaned[0]["path"] == "WeatherApp"
+
+    def test_input_not_mutated(self):
+        results = [{"type": "file", "path": "dir_1/nested_1.txt", "suggested_folder": "Data"}]
+        before = [dict(r) for r in results]
+        sanitize_results(results, self._files())
+        assert results == before
