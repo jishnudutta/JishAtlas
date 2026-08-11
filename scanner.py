@@ -262,7 +262,9 @@ def scan_directory(root_dir):
             try:
                 text = path.read_text(encoding="utf-8")
                 content = summarize_content(text)
-            except UnicodeDecodeError:
+            except (UnicodeDecodeError, OSError):
+                # Binary content or an unreadable/locked file (e.g. one open in
+                # another program) is skipped instead of crashing the scan.
                 content = None
 
             files.append(

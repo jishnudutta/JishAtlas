@@ -179,6 +179,33 @@ Then run:
 python main.py
 ```
 
+## Building the executable
+
+The Windows release is a single-file executable built with PyInstaller from
+`JishAtlas.spec`. The spec explicitly bundles the `llama_cpp` native DLLs
+(loaded at runtime via ctypes, so static analysis alone would miss them) and
+all `google.genai` submodules.
+
+Build and test:
+
+```bash
+# Install everything, including dev tools (pytest, PyInstaller)
+uv sync --group dev
+
+# Run the unit test suite (logic only, no model required)
+pytest
+
+# Build the single-file executable into dist/JishAtlas.exe
+pyinstaller JishAtlas.spec
+
+# Smoke-test the packaged exe itself (skips if the exe is not built)
+pytest tests/test_exe_smoke.py
+```
+
+Note: `uv sync --group dev` installs the `dev` dependency group (pytest and
+PyInstaller). If you are not using uv, run `pip install pytest pyinstaller`
+in your environment.
+
 ## Gemini setup
 
 If you select the Gemini backend, JishAtlas will ask for your API key if one has not already been configured.
