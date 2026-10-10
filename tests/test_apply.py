@@ -132,6 +132,36 @@ class TestOrganizedCopy:
         after = sorted(str(p.relative_to(source)) for p in source.rglob("*"))
         assert before == after
 
+    def test_existing_organized_copy_is_preserved(self, tmp_path):
+        source = tmp_path / "messy"
+        self._make_source(source)
+        previous = tmp_path / "messy_Organised"
+        previous.mkdir()
+        (previous / "important.txt").write_text("keep this")
+
+        new_folder, stats = create_organized_copy(
+            self._results(), source, [Path("node_modules")]
+        )
+
+        assert new_folder.name == "messy_Organised (2)"
+        assert (previous / "important.txt").read_text() == "keep this"
+        assert stats["errors"] == 0
+
+    def test_duplicate_suggested_destination_fails_without_overwrite(self, tmp_path):
+        source = tmp_path / "messy"
+        source.mkdir()
+        (source / "a.txt").write_text("first")
+        (source / "b.txt").write_text("second")
+        results = [
+            {"type": "file", "path": "a.txt", "suggested_folder": "Docs", "suggested_name": "same.txt"},
+            {"type": "file", "path": "b.txt", "suggested_folder": "Docs", "suggested_name": "same.txt"},
+        ]
+
+        new_folder, stats = create_organized_copy(results, source, [])
+
+        assert stats["errors"] == 1
+        assert (new_folder / "Docs/same.txt").read_text() == "first"
+
     def test_passthrough_inside_project_travels_with_project(self, tmp_path):
         """A passthrough dir nested inside a project root must not be copied
         separately - it travels with the project as one unit."""
@@ -270,6 +300,23 @@ class TestApplySameFolder:
         assert (source / "Docs/readme.txt").read_text() == "hello"
         # No backup left behind.
         assert not (tmp_path / "messy.jishatlas_backup").exists()
+
+    def test_existing_backup_is_preserved(self, tmp_path):
+        source = tmp_path / "messy"
+        source.mkdir()
+        (source / "a.txt").write_text("current")
+        old_backup = tmp_path / "messy.jishatlas_backup"
+        old_backup.mkdir()
+        (old_backup / "old.txt").write_text("previous backup")
+
+        apply_changes_same_folder(
+            [{"type": "file", "path": "a.txt", "suggested_folder": ".", "suggested_name": "a.txt"}],
+            source,
+            [],
+        )
+
+        assert (source / "a.txt").read_text() == "current"
+        assert (old_backup / "old.txt").read_text() == "previous backup"
 
     def test_in_place_aborts_if_copy_incomplete(self, tmp_path):
         source = tmp_path / "messy"

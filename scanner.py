@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import warnings
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from llama_cpp import Llama
@@ -18,6 +19,21 @@ class File:
     full_path: str
     parent_folder: str
     contents: str | None
+
+
+PASSTHROUGH_DIRS = {
+    "build",
+    "dist",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".vscode",
+    ".vs",
+    "obj",
+    ".idea",
+    ".git",
+}
 
 
 PROJECT_FILE_MARKERS = {
@@ -163,17 +179,45 @@ PROJECT_PATTERNS = {
 }
 
 llm = None
+DEFAULT_CONTEXT_TOKENS = 32768
+MAX_CONTEXT_TOKENS = 40960
+MAX_FILE_SAMPLE_CHARS = 1200
+
+
+def _configured_context_tokens() -> int:
+    """Read the local model context size, falling back safely if invalid."""
+    raw_value = os.getenv("JISHATLAS_CONTEXT_TOKENS", str(DEFAULT_CONTEXT_TOKENS))
+    try:
+        value = int(raw_value)
+    except ValueError:
+        warnings.warn(
+            "JISHATLAS_CONTEXT_TOKENS must be a number; using the default.",
+            RuntimeWarning,
+        )
+        return DEFAULT_CONTEXT_TOKENS
+
+    if not 4096 <= value <= MAX_CONTEXT_TOKENS:
+        warnings.warn(
+            f"JISHATLAS_CONTEXT_TOKENS must be between 4096 and {MAX_CONTEXT_TOKENS}; "
+            "using the default.",
+            RuntimeWarning,
+        )
+        return DEFAULT_CONTEXT_TOKENS
+    return value
 
 
 def get_text_model():
     global llm
 
     if llm is None:
+        os.environ["LLAMA_CHAT_TEMPLATE_KWARGS"] = (
+            '{"enable_thinking": false}'
+        )
         model_path = ensure_qwen()
 
         llm = Llama(
             model_path=str(model_path),
-            n_ctx=2048,
+            n_ctx=_configured_context_tokens(),
             verbose=False,
         )
 
@@ -195,7 +239,7 @@ Do not guess information that is not present.
 Return ONLY the summary.
 
 FILE CONTENT:
-{content[:2000]}
+{content[:MAX_FILE_SAMPLE_CHARS]}
 """
 
     response = model.create_chat_completion(
@@ -206,33 +250,17 @@ FILE CONTENT:
             }
         ],
         temperature=0.2,
-        max_tokens=50,
+        max_tokens=32,
     )
 
     return response["choices"][0]["message"]["content"].strip()
 
 
-def scan_directory(root_dir):
+def scan_directory(root_dir, summarize=True):
     folders = []
     files = []
 
-    PASSTHROUGH_DIRS = {
-        "build",
-        "dist",
-        "node_modules",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".vscode",
-        ".vs",
-        "obj",
-        ".idea",
-        ".git",
-    }
-
     passthrough_dirs = []
-
-    print("📂 Scanning folder...")
 
     for current_root, dirs, filenames in os.walk(root_dir):
 
@@ -260,8 +288,9 @@ def scan_directory(root_dir):
             path = Path(current_root) / filename
 
             try:
-                text = path.read_text(encoding="utf-8")
-                content = summarize_content(text)
+                with path.open("r", encoding="utf-8") as source_file:
+                    text = source_file.read(MAX_FILE_SAMPLE_CHARS)
+                content = summarize_content(text) if summarize else text.strip()
             except (UnicodeDecodeError, OSError):
                 # Binary content or an unreadable/locked file (e.g. one open in
                 # another program) is skipped instead of crashing the scan.
@@ -282,7 +311,6 @@ def detect_projects(root_dir):
     project_roots = set()
 
     for current_root, dirs, files in os.walk(root_dir):
-
         current_path = Path(current_root)
 
         score = 0
@@ -303,5 +331,9 @@ def detect_projects(root_dir):
 
         if score >= 100:
             project_roots.add(current_path)
+
+        # Count markers on this folder first (notably .git), then prune
+        # generated/dependency trees so their contents are not traversed.
+        dirs[:] = [dirname for dirname in dirs if dirname not in PASSTHROUGH_DIRS]
 
     return project_roots

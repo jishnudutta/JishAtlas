@@ -57,8 +57,25 @@ class TestDetectProjects:
         roots = {p.relative_to(tmp_path) for p in scanner.detect_projects(tmp_path)}
         assert Path("outer/mid/proj") in roots
 
+    def test_git_project_marker_detected_without_walking_git(self, tmp_path):
+        _make_tree(tmp_path, {"repo/.git/config": "", "repo/.git/objects/package.json": "{}"})
+        roots = {p.relative_to(tmp_path) for p in scanner.detect_projects(tmp_path)}
+        assert Path("repo") in roots
+        assert Path("repo/.git/objects") not in roots
+
 
 class TestScanDirectory:
+    def test_context_size_defaults_to_32k_and_accepts_override(self, monkeypatch):
+        monkeypatch.delenv("JISHATLAS_CONTEXT_TOKENS", raising=False)
+        assert scanner._configured_context_tokens() == 32768
+
+        monkeypatch.setenv("JISHATLAS_CONTEXT_TOKENS", "24576")
+        assert scanner._configured_context_tokens() == 24576
+
+    def test_invalid_context_size_uses_safe_default(self, monkeypatch):
+        monkeypatch.setenv("JISHATLAS_CONTEXT_TOKENS", "999999")
+        assert scanner._configured_context_tokens() == 32768
+
     def test_scans_files_and_folders(self, tmp_path, monkeypatch):
         # Avoid loading the LLM: replace summarize_content with a stub.
         monkeypatch.setattr(scanner, "summarize_content", lambda c: "stub summary")
@@ -123,3 +140,14 @@ class TestScanDirectory:
         assert None in contents  # binary file has no summary
         assert "stub" in contents
         assert len(calls) == 1  # only the text file reached the summarizer
+
+    def test_gemini_scan_uses_text_snippet_without_local_model(self, tmp_path, monkeypatch):
+        def fail_if_called(_):
+            raise AssertionError("Gemini scan must not load the local model")
+
+        monkeypatch.setattr(scanner, "summarize_content", fail_if_called)
+        _make_tree(tmp_path, {"notes.txt": "important notes"})
+
+        files, _, _ = scanner.scan_directory(tmp_path, summarize=False)
+
+        assert files[0].contents == "important notes"

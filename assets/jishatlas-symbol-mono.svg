@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">JishAtlas monochrome symbol</title>
+  <desc id="description">A single-color geometric J with three indexed paths.</desc>
+  <g fill="#17313D">
+    <rect x="43" y="91" width="24" height="12" rx="3"/>
+    <rect x="43" y="122" width="24" height="12" rx="3"/>
+    <rect x="43" y="153" width="24" height="12" rx="3"/>
+    <path d="M82 61h105v101c0 42-26 66-68 66H78v-36h40c24 0 34-10 34-32V97H82z"/>
+  </g>
+</svg>

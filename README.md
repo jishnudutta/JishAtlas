@@ -1,7 +1,7 @@
 # JishAtlas
 
 <p align="center">
-  <img src="assets/icon.png" alt="JishAtlas" width="128" />
+  <img src="assets/jishatlas-logo.svg" alt="JishAtlas" width="420" />
 </p>
 
 ### AI-powered intelligent file organization
@@ -36,7 +36,8 @@ JishAtlas is designed to be simple, safe, and easy to use.
 - Organized-copy mode that leaves the original folder untouched
 - Validation of AI suggestions before filesystem changes
 - Automatic local model downloading
-- Simple terminal-based interface
+- Interactive terminal interface with live scan, analysis, and copy progress
+- Set or change the Gemini API key from the backend menu
 
 ## How it works
 
@@ -75,6 +76,10 @@ JishAtlas can use a local Qwen model to analyze your files.
 The model runs on your computer, so your files do not need to be sent to a cloud service for the analysis.
 
 The model is downloaded automatically the first time you use the Local AI backend and stored in your local JishAtlas application data directory.
+Local AI uses a 32,768-token context by default and automatically divides large
+scans into context-sized batches while retaining every scanned file. Set
+`JISHATLAS_CONTEXT_TOKENS` in `.env` to a value from `4096` to `40960` to tune
+memory use.
 
 ### Google Gemini
 
@@ -174,7 +179,7 @@ Activate the environment on Windows:
 Install the dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
 Then run:
@@ -191,6 +196,15 @@ The Windows release is a single-file executable built with PyInstaller from
 all `google.genai` submodules.
 
 Build and test:
+
+On Windows, double-click [`build_exe.bat`](build_exe.bat). It prepares the
+build environment and creates `dist/JishAtlas.exe`. It uses a locked, separate
+`uv` build environment when available; otherwise it creates a Python 3.13
+build environment and installs the required packages. The build uses the project
+spec, which includes the llama.cpp runtime DLLs, then runs an executable
+startup smoke test to catch packaging errors.
+
+For a manual build:
 
 ```bash
 # Install everything, including dev tools (pytest, PyInstaller)

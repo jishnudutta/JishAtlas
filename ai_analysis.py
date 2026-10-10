@@ -1,20 +1,23 @@
-from llama_cpp import Llama, LlamaGrammar
+from llama_cpp import LlamaGrammar
 from google import genai
 from google.genai import types
 from pathlib import Path
 import os
+import sys
 import json
 from dotenv import load_dotenv
 from dataclasses import asdict
-from rich.console import Console
-from rich.panel import Panel
-import time
-from rich.status import Status
-from installmodels import ensure_qwen
+from rich.table import Table
+from rich import box
+from rich.text import Text
+from ui import console
+import scanner
 
-console = Console()
+if not getattr(sys, "frozen", False):
+    load_dotenv()
+from input import ENV_FILE
 
-load_dotenv()
+load_dotenv(ENV_FILE, override=False)
 
 
 # --------------------------------------------------
@@ -201,19 +204,19 @@ PROJECT ROOTS
 def prepare_ai_data(files, folders, project_roots):
     files_json = json.dumps(
         [asdict(file) for file in files],
-        indent=2,
+        separators=(",", ":"),
         ensure_ascii=False,
     )
 
     folders_json = json.dumps(
         [asdict(folder) for folder in folders],
-        indent=2,
+        separators=(",", ":"),
         ensure_ascii=False,
     )
 
     project_roots_json = json.dumps(
         [str(path) for path in project_roots],
-        indent=2,
+        separators=(",", ":"),
         ensure_ascii=False,
     )
 
@@ -257,23 +260,106 @@ def create_local_grammar():
 
 
 def load_local_model():
-    os.environ["LLAMA_CHAT_TEMPLATE_KWARGS"] = (
-        '{"enable_thinking": false}'
-    )
-
     with console.status(
         "[bold cyan]🤖 Loading local AI model...[/bold cyan]",
         spinner="dots",
     ):
-        llm = Llama(
-            model_path=str(ensure_qwen()),
-            n_ctx=16384,
-            verbose=False,
-        )
+        llm = scanner.get_text_model()
 
     console.print("[bold green]✓ Local AI ready![/bold green]")
 
     return llm
+
+
+def _local_prompt_batches(files, folders, project_roots, llm):
+    """Pack files into prompts that fit the model context and output reserve."""
+    context_size = llm.n_ctx()
+    output_reserve = min(4096, max(1024, context_size // 8))
+    input_budget = context_size - output_reserve
+    folder_paths = sorted({folder.full_path for folder in folders})
+    roots_json = json.dumps(
+        [str(path) for path in sorted(project_roots, key=str)],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+    def render(file_batch, available_folders):
+        files_json = json.dumps(
+            [asdict(file) for file in file_batch],
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        folders_json = json.dumps(
+            available_folders,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        prompt = build_prompt(files_json, folders_json, roots_json)
+        return prompt, len(llm.tokenize(prompt.encode("utf-8"), add_bos=True))
+
+    _, base_tokens = render([], folder_paths)
+    if base_tokens > input_budget:
+        # Original parent paths remain in each File record; use them as the
+        # folder candidates if a very large tree exhausts the shared context.
+        folder_paths = sorted(
+            {
+                file.parent_folder
+                for file in files
+                if file.parent_folder and file.parent_folder != "."
+            }
+        )
+        _, base_tokens = render([], folder_paths)
+    if base_tokens > input_budget:
+        raise ValueError(
+            "The folder and project list is larger than the local model's "
+            "usable context. Increase JISHATLAS_CONTEXT_TOKENS or organize "
+            "a smaller folder."
+        )
+
+    batches = []
+    current = []
+    estimated_tokens = base_tokens
+    for file in files:
+        encoded = json.dumps(
+            asdict(file), separators=(",", ":"), ensure_ascii=False
+        )
+        item_tokens = len(llm.tokenize(encoded.encode("utf-8"), add_bos=False)) + 12
+        if current and estimated_tokens + item_tokens > input_budget:
+            batches.append(current)
+            current = []
+            estimated_tokens = base_tokens
+        current.append(file)
+        estimated_tokens += item_tokens
+    if current:
+        batches.append(current)
+
+    prompts = []
+
+    def append_fitting(batch):
+        prompt, token_count = render(batch, folder_paths)
+        if token_count <= input_budget:
+            prompts.append((prompt, batch))
+        elif len(batch) > 1:
+            midpoint = len(batch) // 2
+            append_fitting(batch[:midpoint])
+            append_fitting(batch[midpoint:])
+        else:
+            # File contents help classification but are optional when one
+            # unusually long path or record would otherwise exceed context.
+            compact_file = type(batch[0])(
+                **{**asdict(batch[0]), "contents": None}
+            )
+            prompt, token_count = render([compact_file], folder_paths)
+            if token_count > input_budget:
+                raise ValueError(
+                    f"The path '{batch[0].full_path}' is too large for the "
+                    "local model context."
+                )
+            prompts.append((prompt, [compact_file]))
+
+    for batch in batches:
+        append_fitting(batch)
+    return prompts
 
 # --------------------------------------------------
 # Path validation
@@ -425,7 +511,21 @@ def complete_results(results, files):
 def print_results(results):
     console.print("\n[bold cyan]✓ AI analysis complete![/bold cyan]\n")
 
-    console.rule("[bold cyan]Suggested Changes[/bold cyan]")
+    if not results:
+        console.print("[dim]There are no changes to review.[/dim]")
+        return
+
+    table = Table(
+        title="Suggested changes  ·  review before applying",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        row_styles=["", "dim"],
+        expand=True,
+    )
+    table.add_column("Item", style="bold", no_wrap=True)
+    table.add_column("Current location", overflow="fold")
+    table.add_column("Planned location", style="green", overflow="fold")
 
     for result in results:
         source = Path(result["path"])
@@ -438,29 +538,16 @@ def print_results(results):
 
             destination = Path(result["suggested_folder"]) / suggested_name
 
-            title = f"📄 {source.name}"
+            item_type = "FILE"
 
         else:
             destination = Path(result["suggested_folder"]) / source.name
 
-            title = f"📦 {source.name}"
+            item_type = "PROJECT"
 
-        content = (
-            f"[bold yellow]From[/bold yellow]\n"
-            f"  {source}\n\n"
-            f"[bold green]To[/bold green]\n"
-            f"  {destination}"
-        )
+        table.add_row(item_type, Text(str(source)), Text(str(destination)))
 
-        console.print(
-            Panel(
-                content,
-                title=title,
-                border_style="cyan",
-                padding=(0, 1),
-            )
-        )
-        time.sleep(0.2)
+    console.print(table)
 
 
 # --------------------------------------------------
@@ -469,12 +556,14 @@ def print_results(results):
 
 
 def categorize_gemini(files, folders, passthrough_dirs, project_roots):
+    if not files and not project_roots:
+        console.print("[dim]No files or projects found to organize.[/dim]")
+        return []
 
-    print(f"✓ Found {len(files)} files in {len(folders)} folders")
-    print(f"📦 Passthrough directories: {len(passthrough_dirs)}")
-    print("\n🤖 Asking Gemini to analyze your files...")
-
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    console.print(
+        f"[dim]Preparing {len(files)} files, {len(folders)} folders, and "
+        f"{len(project_roots)} protected projects for Gemini.[/dim]"
+    )
 
     files_json, folders_json, project_roots_json = prepare_ai_data(
         files,
@@ -489,20 +578,25 @@ def categorize_gemini(files, folders, passthrough_dirs, project_roots):
     )
 
     try:
-        response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
+        with console.status(
+            "[bold cyan]☁  Gemini is building your organization plan...[/bold cyan]",
+            spinner="dots",
+        ):
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
 
         results = json.loads(response.text)
 
     except json.JSONDecodeError:
-        print("❌ Gemini returned invalid JSON.")
+        console.print("[bold red]❌ Gemini returned invalid JSON.[/bold red]")
         raise SystemExit
 
     except Exception as e:
-        print(f"❌ AI request failed: {e}")
+        console.print(f"[bold red]❌ AI request failed:[/bold red] {e}")
         raise SystemExit
 
     results = sanitize_results(results, files)
@@ -519,53 +613,64 @@ def categorize_gemini(files, folders, passthrough_dirs, project_roots):
 
 
 def categorize_local(files, folders, passthrough_dirs, project_roots):
+    if not files and not project_roots:
+        console.print("[dim]No files or projects found to organize.[/dim]")
+        return []
 
-    print(f"✓ Found {len(files)} files in {len(folders)} folders")
-    print(f"📦 Passthrough directories: {len(passthrough_dirs)}")
-    print("\n🤖 Asking local AI to analyze your files...")
-
-    files_json, folders_json, project_roots_json = prepare_ai_data(
-        files,
-        folders,
-        project_roots,
-    )
-
-    prompt = build_prompt(
-        files_json,
-        folders_json,
-        project_roots_json,
+    console.print(
+        f"[dim]Preparing {len(files)} files, {len(folders)} folders, and "
+        f"{len(project_roots)} protected projects for Local AI.[/dim]"
     )
 
     grammar = create_local_grammar()
     llm = load_local_model()
+    raw_results = []
+    response_budget = min(4096, max(512, llm.n_ctx() // 8))
 
     try:
         with console.status(
-    "[bold cyan]🧠 Analyzing your files...[/bold cyan]",
-    spinner="dots",
-):
-            response = llm.create_chat_completion(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": prompt,
-                    }
-                ],
-                grammar=grammar,
-                temperature=0.2,
+            "[bold cyan]Packing files into efficient context-sized batches...[/bold cyan]",
+            spinner="dots",
+        ):
+            prompt_batches = _local_prompt_batches(files, folders, project_roots, llm)
+        for index, (prompt, _) in enumerate(prompt_batches, start=1):
+            with console.status(
+                f"[bold cyan]🧠 Analyzing batch {index}/{len(prompt_batches)}...[/bold cyan]",
+                spinner="dots",
+            ):
+                response = llm.create_chat_completion(
+                    messages=[{"role": "system", "content": prompt}],
+                    grammar=grammar,
+                    temperature=0.2,
+                    max_tokens=response_budget,
+                )
+
+            raw_results.extend(
+                json.loads(response["choices"][0]["message"]["content"])
             )
 
-        results = json.loads(response["choices"][0]["message"]["content"])
-
     except json.JSONDecodeError:
-        print("❌ Local AI returned invalid JSON.")
+        console.print("[bold red]❌ Local AI returned invalid JSON.[/bold red]")
         raise SystemExit
 
     except Exception as e:
-        print(f"❌ AI request failed: {e}")
+        console.print(f"[bold red]❌ AI request failed:[/bold red] {e}")
         raise SystemExit
 
-    results = sanitize_results(results, files)
+    # Project roots may be repeated across batches. Keep one result per source
+    # path before validating the complete plan against the original scan.
+    unique_results = []
+    seen = set()
+    for result in raw_results:
+        key = (
+            result.get("type"),
+            str(result.get("path", "")).replace("\\", "/").lower(),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(result)
+
+    results = sanitize_results(unique_results, files)
     results = complete_results(results, files)
     print_results(results)
 

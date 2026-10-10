@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 180" role="img" aria-labelledby="title description">
+  <title id="title">JishAtlas</title>
+  <desc id="description">A geometric J joined by three indexed paths, followed by the JishAtlas wordmark.</desc>
+  <g transform="translate(10 10)">
+    <rect width="160" height="160" rx="28" fill="#17313D"/>
+    <g fill="#F2EFE4">
+      <rect x="28" y="65" width="18" height="10" rx="2"/>
+      <rect x="28" y="90" width="18" height="10" rx="2"/>
+      <rect x="28" y="115" width="18" height="10" rx="2"/>
+    </g>
+    <path fill="#72B7A4" d="M62 43h76v79c0 31-19 49-50 49H58v-27h29c17 0 25-8 25-23V70H62z"/>
+  </g>
+  <text x="195" y="111" fill="#17313D" font-family="Aptos, 'Segoe UI', Arial, sans-serif" font-size="51" font-weight="650" letter-spacing="-2.2">JishAtlas</text>
+</svg>

@@ -1,5 +1,4 @@
 import sys
-from input import setup_gemini_api_key
 import ctypes
 
 ctypes.windll.kernel32.SetConsoleTitleW(
@@ -28,6 +27,7 @@ from scanner import scan_directory
 from scanner import detect_projects
 from welcome import show
 from ai_analysis import categorize_gemini, categorize_local
+from ui import console
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -57,13 +57,28 @@ def main():
             if folder is None:
                 break
 
-            files, folders, passthrough_dirs = scan_directory(folder)
-            project_roots = detect_projects(folder)
-
             backend = select_ai_backend()
 
+            console.rule("[bold cyan]01  ·  Scan and understand[/bold cyan]")
+            with console.status(
+                "[bold cyan]Reading files and looking for protected projects...[/bold cyan]",
+                spinner="dots",
+            ):
+                files, folders, passthrough_dirs = scan_directory(
+                    folder,
+                    summarize=(backend == "local"),
+                )
+                project_roots = detect_projects(folder)
+
+            console.print(
+                f"[green]✓[/green] [bold]{len(files)}[/bold] files  ·  "
+                f"[bold]{len(folders)}[/bold] folders  ·  "
+                f"[bold]{len(project_roots)}[/bold] protected projects  ·  "
+                f"[bold]{len(passthrough_dirs)}[/bold] skipped system folders\n"
+            )
+
+            console.rule("[bold cyan]02  ·  Build an organization plan[/bold cyan]")
             if backend == "gemini":
-                setup_gemini_api_key()
                 results = categorize_gemini(
                     files,
                     folders,
@@ -78,6 +93,7 @@ def main():
                     project_roots,
                 )
 
+            console.rule("[bold green]03  ·  Choose how to apply it[/bold green]")
             organization_mode = select_organization_mode()
 
             apply_changes = ask_apply_changes()
@@ -96,7 +112,7 @@ def main():
                         passthrough_dirs,
                     )
             else:
-                print("Operation cancelled.")
+                console.print("[yellow]Changes were not applied.[/yellow]")
 
             # Keep the program open instead of closing abruptly after the
             # results: let the user organize another folder or quit.
@@ -106,10 +122,10 @@ def main():
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C or exhausted piped input: exit quietly instead of a
         # traceback. SystemExit is deliberately not caught here - it is
-        # raised for graceful exits (invalid folder, missing API key).
+        # raised by AI setup when a service fails or returns unusable output.
         pass
 
-    print("\n👋 Thanks for using JishAtlas! Goodbye.")
+    console.print("\n[bold cyan]Thanks for using JishAtlas.[/bold cyan] [dim]See you next time![/dim]")
 
 
 if __name__ == "__main__":

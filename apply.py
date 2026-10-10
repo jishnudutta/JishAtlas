@@ -1,33 +1,52 @@
 from pathlib import Path
 from shutil import copy2, copytree, rmtree
 import hashlib
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.progress import track
+from ui import console
+
+
+def _say(message=""):
+    """Print literal text cleanly while a Rich progress display is active."""
+    console.print(Text(str(message)))
+
 
 
 def print_summary(stats, output_folder: Path, missing_count: int = 0):
-    print("\n" + "=" * 60)
-    print("                 JishAtlas Summary")
-    print("=" * 60)
-
-    print(f"📄 Files organized      : {stats['files_copied']}")
-    print(f"📁 Folders created      : {len(stats['folders_created'])}")
-    print(f"🗂️  Projects moved       : {stats['projects_copied']}")
-    print(f"📦 Passthrough copied   : {stats['passthrough_copied']}")
-    print(f"❌ Errors               : {stats['errors']}")
-
-    print("\nOutput Folder:")
-    print(f"  {output_folder}")
-
-    print("=" * 60)
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="dim")
+    summary.add_column(justify="right", style="bold")
+    summary.add_row("Files organized", str(stats["files_copied"]))
+    summary.add_row("Folders created", str(len(stats["folders_created"])))
+    summary.add_row("Projects kept together", str(stats["projects_copied"]))
+    summary.add_row("Protected folders copied", str(stats["passthrough_copied"]))
+    summary.add_row("Items with errors", str(stats["errors"]))
+    summary.add_row("Output folder", Text(str(output_folder), style="cyan", overflow="fold"))
 
     if missing_count > 0:
-        print(
-            f"⚠️ Organization completed, but {missing_count} file(s) were not "
-            "copied because the AI did not include them."
-        )
+        heading = "Completed with missing files"
+        border = "yellow"
     elif stats["errors"] == 0:
-        print("✅ Organization completed successfully!")
+        heading = "Organization complete"
+        border = "green"
     else:
-        print("⚠️ Organization completed with errors.")
+        heading = "Completed with errors"
+        border = "yellow"
+
+    console.print(
+        Panel(
+            summary,
+            title=f"[bold {border}]✦ {heading}[/bold {border}]",
+            border_style=border,
+            padding=(1, 2),
+        )
+    )
+    if missing_count > 0:
+        console.print(
+            f"[yellow]The copy is missing {missing_count} file(s) that the AI did not include.[/yellow]"
+        )
 
 
 def _safe_source(folder_path: Path, rel_path: Path) -> Path | None:
@@ -62,16 +81,26 @@ def _safe_destination(new_folder: Path, suggested_folder, name) -> Path | None:
     return destination
 
 
+def _new_output_folder(folder_path: Path) -> Path:
+    """Create a fresh output folder without replacing a previous run."""
+    base = folder_path.with_name(f"{folder_path.name}_Organised")
+    candidate = base
+    suffix = 2
+
+    while True:
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            candidate = base.with_name(f"{base.name} ({suffix})")
+            suffix += 1
+
+
 def create_organized_copy(results, main_dir, passthrough_dirs):
     folder_path = Path(main_dir)
-    parent_dir = folder_path.parent
 
-    new_folder = parent_dir / f"{folder_path.name}_Organised"
-
-    # Rebuild from scratch: never merge stale content from a previous run
-    if new_folder.exists():
-        rmtree(new_folder)
-    new_folder.mkdir(parents=True, exist_ok=True)
+    # Never delete or merge into a previous output. Each run gets a new folder.
+    new_folder = _new_output_folder(folder_path)
 
     stats = {
         "files_copied": 0,
@@ -88,12 +117,12 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
     ]
 
     # Copy AI-organized files
-    for result in results:
+    for result in track(results, description="[cyan]Organizing files and projects", console=console):
         path_str = result.get("path")
 
         if not path_str:
             stats["errors"] += 1
-            print("Failed to copy: result is missing a path")
+            _say("Failed to copy: result is missing a path")
             continue
 
         rel_path = Path(path_str)
@@ -107,7 +136,7 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
         if source is None:
             stats["errors"] += 1
-            print(
+            _say(
                 f"Failed to copy {result['path']}: path escapes the folder being organized"
             )
             continue
@@ -116,7 +145,7 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
         # (the AI can drop path components or invent names on large folders).
         if not source.exists():
             stats["errors"] += 1
-            print(
+            _say(
                 f"Failed to copy {result['path']}: the AI suggested a path that "
                 "was not found in the folder"
             )
@@ -128,7 +157,7 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
             if not suggested_folder:
                 stats["errors"] += 1
-                print(
+                _say(
                     f"Failed to copy project {source}: result is missing a suggested folder"
                 )
                 continue
@@ -141,18 +170,23 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
             if destination is None:
                 stats["errors"] += 1
-                print(
+                _say(
                     f"Failed to copy project {source}: destination escapes the organized folder"
                 )
                 continue
 
+            if destination.exists():
+                stats["errors"] += 1
+                _say(f"Failed to copy project {source}: destination already exists")
+                continue
+
             try:
-                copytree(source, destination, dirs_exist_ok=True)
+                copytree(source, destination)
                 stats["projects_copied"] += 1
 
             except Exception as e:
                 stats["errors"] += 1
-                print(f"Failed to copy project {source}: {e}")
+                _say(f"Failed to copy project {source}: {e}")
 
             continue
 
@@ -165,7 +199,7 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
         if not suggested_folder or not suggested_name:
             stats["errors"] += 1
-            print(
+            _say(
                 f"Failed to copy {source}: result is missing a suggested folder or name"
             )
             continue
@@ -178,7 +212,12 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
         if destination is None:
             stats["errors"] += 1
-            print(f"Failed to copy {source}: destination escapes the organized folder")
+            _say(f"Failed to copy {source}: destination escapes the organized folder")
+            continue
+
+        if destination.exists():
+            stats["errors"] += 1
+            _say(f"Failed to copy {source}: destination already exists")
             continue
 
         try:
@@ -191,10 +230,14 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
 
         except Exception as e:
             stats["errors"] += 1
-            print(f"Failed to copy {source}: {e}")
+            _say(f"Failed to copy {source}: {e}")
 
     # Copy passthrough directories (node_modules, .venv, .git, ...)
-    for directory in passthrough_dirs:
+    for directory in track(
+        passthrough_dirs,
+        description="[cyan]Preserving protected folders",
+        console=console,
+    ):
         # Passthrough dirs nested inside a project root travel with the project
         if any(directory.is_relative_to(p) for p in project_paths):
             continue
@@ -203,12 +246,12 @@ def create_organized_copy(results, main_dir, passthrough_dirs):
         destination = new_folder / directory
 
         try:
-            copytree(source, destination, dirs_exist_ok=True)
+            copytree(source, destination)
             stats["passthrough_copied"] += 1
 
         except Exception as e:
             stats["errors"] += 1
-            print(f"Failed to copy {source}: {e}")
+            _say(f"Failed to copy {source}: {e}")
 
     return new_folder, stats
 
@@ -283,18 +326,21 @@ def apply_changes_diff_folder(results, main_dir, passthrough_dirs):
     # any missing files so an incomplete copy is never mistaken for a
     # complete organization. The original folder is untouched in copy mode,
     # so this is a warning rather than an abort.
-    print("\n🔍 Checking the organized copy is complete...")
-    missing = verify_complete_copy(folder_path, new_folder)
+    with console.status(
+        "[bold cyan]Checking every copied file...[/bold cyan]",
+        spinner="dots",
+    ):
+        missing = verify_complete_copy(folder_path, new_folder)
 
     if missing:
-        print(
+        _say(
             f"\n⚠️ The organized copy is missing {len(missing)} file(s) that "
             "the AI did not include."
         )
         for path in missing[:10]:
-            print(f"   {path}")
+            _say(f"   {path}")
         if len(missing) > 10:
-            print(f"   ... and {len(missing) - 10} more")
+            _say(f"   ... and {len(missing) - 10} more")
 
     print_summary(stats, new_folder, missing_count=len(missing))
 
@@ -309,67 +355,69 @@ def apply_changes_same_folder(results, main_dir, passthrough_dirs):
     )
 
     if stats["errors"] > 0:
-        print("\nOrganization aborted because errors occurred.")
-        print("The original folder has NOT been modified.")
+        _say("\nOrganization aborted because errors occurred.")
+        _say("The original folder has NOT been modified.")
         return
 
     # Safety check: never touch the original unless every file in it exists
     # in the organized copy (matched by content, not by path).
-    print("\n🔍 Verifying the organized copy is complete...")
-    missing = verify_complete_copy(folder_path, new_folder)
+    with console.status(
+        "[bold cyan]Verifying every file before replacing the original...[/bold cyan]",
+        spinner="dots",
+    ):
+        missing = verify_complete_copy(folder_path, new_folder)
 
     if missing:
-        print("\n❌ Safety check failed: the organized copy is missing files.")
-        print("This usually means the AI analysis omitted some files when")
-        print("the folder was large. The original folder was left untouched")
-        print("to protect your data.")
-        print()
+        _say("\n❌ Safety check failed: the organized copy is missing files.")
+        _say("This usually means the AI analysis omitted some files when")
+        _say("the folder was large. The original folder was left untouched")
+        _say("to protect your data.")
+        _say()
         for path in missing[:10]:
-            print(f"   {path}")
+            _say(f"   {path}")
         if len(missing) > 10:
-            print(f"   ... and {len(missing) - 10} more")
-        print("\nThe original folder has NOT been modified.")
-        print("\nYou can:")
-        print("  • Re-run JishAtlas - AI results vary between runs.")
-        print("  • Use 'Create Organized Copy' mode, which never touches the original.")
-        print("  • Organize the folder in smaller batches.")
+            _say(f"   ... and {len(missing) - 10} more")
+        _say("\nThe original folder has NOT been modified.")
+        _say("\nYou can:")
+        _say("  • Re-run JishAtlas - AI results vary between runs.")
+        _say("  • Use 'Create Organized Copy' mode, which never touches the original.")
+        _say("  • Organize the folder in smaller batches.")
         return
 
     # Swap the organized copy into place. The original is only deleted after
     # the swap has fully succeeded, so nothing is lost if anything fails.
-    backup = folder_path.with_name(f"{folder_path.name}.jishatlas_backup")
-
-    if backup.exists():
-        try:
-            rmtree(backup)
-        except Exception as e:
-            print(f"\n⚠️ Could not remove stale backup {backup}: {e}")
+    backup_base = folder_path.with_name(f"{folder_path.name}.jishatlas_backup")
+    backup = backup_base
+    suffix = 2
+    while backup.exists():
+        backup = backup_base.with_name(f"{backup_base.name} ({suffix})")
+        suffix += 1
 
     try:
         folder_path.rename(backup)
         new_folder.rename(folder_path)
     except Exception as e:
-        print(f"\n❌ Failed to swap folders: {e}")
+        _say(f"\n❌ Failed to swap folders: {e}")
 
         # Try to restore the original in place
         if backup.exists() and not folder_path.exists():
             try:
                 backup.rename(folder_path)
-                print("The original folder has been restored.")
+                _say("The original folder has been restored.")
             except Exception:
-                print(f"Your files are safe in: {backup}")
+                _say(f"Your files are safe in: {backup}")
         elif folder_path.exists():
-            print("The original folder is still in place and has NOT been modified.")
+            _say("The original folder is still in place and has NOT been modified.")
         elif backup.exists():
-            print(f"Your files are safe in: {backup}")
+            _say(f"Your files are safe in: {backup}")
 
-        print("The original folder has NOT been replaced.")
+        _say("The original folder has NOT been replaced.")
         return
 
     try:
         rmtree(backup)
     except Exception as e:
-        print(f"\n⚠️ Could not remove the backup folder: {e}")
-        print(f"Your files are safe in: {backup}")
+        _say(f"\n⚠️ Could not remove the backup folder: {e}")
+        _say(f"Your files are safe in: {backup}")
 
     print_summary(stats, folder_path)

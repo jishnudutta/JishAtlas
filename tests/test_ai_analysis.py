@@ -58,6 +58,7 @@ class TestPrepareAiData:
         assert json.loads(files_json) == []
         assert json.loads(folders_json) == []
         assert json.loads(roots_json) == []
+        assert " " not in files_json
 
 
 class TestBuildPrompt:
@@ -285,3 +286,35 @@ class TestCompleteResults:
         before = [dict(r) for r in results]
         complete_results(results, self._files())
         assert results == before
+
+
+class TestLocalPromptBatches:
+    class FakeModel:
+        def n_ctx(self):
+            return 8192
+
+        def tokenize(self, text, add_bos=True):
+            return list(text)
+
+    def test_large_file_list_is_split_without_losing_items(self):
+        files = [
+            FakeFile(
+                f"file_{index}.txt",
+                f"docs/file_{index}.txt",
+                "docs",
+                "A short file summary.",
+            )
+            for index in range(120)
+        ]
+        batches = ai_analysis._local_prompt_batches(
+            files,
+            [FakeFolder("docs", "docs")],
+            set(),
+            self.FakeModel(),
+        )
+
+        assert len(batches) > 1
+        assert [file.full_path for _, batch in batches for file in batch] == [
+            file.full_path for file in files
+        ]
+        assert all(len(prompt) <= 8192 - 1024 for prompt, _ in batches)

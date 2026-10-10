@@ -20,7 +20,11 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=collect_dynamic_libs('llama_cpp'),
-    datas=collect_data_files('llama_cpp'),
+    datas=collect_data_files('llama_cpp') + [
+        ('assets/jishatlas-icon.svg', 'assets'),
+        ('assets/jishatlas-logo.svg', 'assets'),
+        ('assets/jishatlas-symbol-mono.svg', 'assets'),
+    ],
     hiddenimports=[
         'dotenv',
         'llama_cpp',

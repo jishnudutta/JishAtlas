@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">JishAtlas icon</title>
+  <desc id="description">A geometric sea-glass J beside three indexed paths on a deep blue field.</desc>
+  <rect width="256" height="256" rx="44" fill="#17313D"/>
+  <g fill="#F2EFE4">
+    <rect x="43" y="91" width="24" height="12" rx="3"/>
+    <rect x="43" y="122" width="24" height="12" rx="3"/>
+    <rect x="43" y="153" width="24" height="12" rx="3"/>
+  </g>
+  <path fill="#72B7A4" d="M82 61h105v101c0 42-26 66-68 66H78v-36h40c24 0 34-10 34-32V97H82z"/>
+</svg>

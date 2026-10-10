@@ -1,12 +1,11 @@
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
-from rich.console import Console
 from rich.panel import Panel
 
 from input import get_app_dir
+from ui import console
 
-console = Console()
 
 APP_DIR = get_app_dir()
 MODEL_DIR = APP_DIR / "models"
