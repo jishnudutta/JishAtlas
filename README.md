@@ -1,309 +1,124 @@
 # JishAtlas
 
-<p align="center">
-  <img src="assets/jishatlas-logo.svg" alt="JishAtlas" width="420" />
-</p>
-
-### AI-powered intelligent file organization
-
-**Local AI • Google Gemini • Privacy First**
-
-Organize files intelligently with offline Local AI or enhanced cloud-powered analysis.
-
-## What is JishAtlas?
-
-JishAtlas is a simple file organization tool that uses AI to help clean up messy folders.
-
-Instead of manually deciding where every file should go, JishAtlas looks at your files, understands their purpose, and suggests a more useful folder structure.
-
-You can review all suggested changes before anything is applied.
-
-JishAtlas is designed to be simple, safe, and easy to use.
-
-## Features
-
-- AI-powered file and folder organization
-- Local AI support for offline organization
-- Google Gemini support for cloud-based analysis
-- Automatic project detection
-- Protects detected projects from being reorganized internally
-- File content analysis for better organization
-- Conservative file renaming
-- Existing folder reuse
-- Nested folder organization when useful
-- Passthrough directories for folders such as `node_modules`, `.git`, and build directories
-- Preview all changes before applying them
-- Organized-copy mode that leaves the original folder untouched
-- Validation of AI suggestions before filesystem changes
-- Automatic local model downloading
-- Interactive terminal interface with live scan, analysis, and copy progress
-- Set or change the Gemini API key from the backend menu
-
-## How it works
-
-JishAtlas follows a simple process:
-
-```text
-Select a folder
-      |
-      v
-Scan files and folders
-      |
-      v
-Detect projects and protected directories
-      |
-      v
-Analyze file contents
-      |
-      v
-Generate an organization plan
-      |
-      v
-Review suggested changes
-      |
-      v
-Apply changes
-```
-
-The AI only creates an organization plan. JishAtlas itself handles the actual filesystem operations and validates the suggestions before applying them.
-
-## AI Backends
-
-### Local AI
-
-JishAtlas can use a local Qwen model to analyze your files.
-
-The model runs on your computer, so your files do not need to be sent to a cloud service for the analysis.
-
-The model is downloaded automatically the first time you use the Local AI backend and stored in your local JishAtlas application data directory.
-Local AI uses a 32,768-token context by default and automatically divides large
-scans into context-sized batches while retaining every scanned file. Set
-`JISHATLAS_CONTEXT_TOKENS` in `.env` to a value from `4096` to `40960` to tune
-memory use.
-
-### Google Gemini
-
-JishAtlas can also use Google Gemini for cloud-based analysis.
-
-Gemini can provide stronger reasoning and is useful when your computer does not have enough resources for local AI.
-
-Using Gemini requires a Gemini API key and an internet connection.
-
-Your API key is stored locally in your `.env` file.
-
-## Safe by design
-
-File organization tools need to be careful because a mistake can affect many files.
-
-JishAtlas therefore separates AI suggestions from filesystem operations.
-
-Before applying changes, it checks things such as:
-
-- Whether the source file actually exists
-- Whether the path came from the scanned files
-- Whether a project is actually a detected project
-- Whether destination paths are valid
-- Whether files would be duplicated
-- Whether files would unexpectedly overwrite existing files
-- Whether the original file extension is preserved
-
-For the safest option, JishAtlas can create an organized copy instead of changing the original folder.
-
-## Projects
-
-JishAtlas can detect common software projects using project markers such as:
-
-```text
-.git
-package.json
-pyproject.toml
-Cargo.toml
-go.mod
-pom.xml
-CMakeLists.txt
-*.sln
-*.csproj
-pubspec.yaml
-composer.json
-```
-
-When a project is detected, JishAtlas treats it as a single unit.
-
-It does not reorganize the files inside the project. If the project needs to be moved, the entire project is moved together.
-
-## Passthrough directories
-
-Some directories should normally never be reorganized.
-
-JishAtlas can skip directories such as:
-
-```text
-.git
-node_modules
-__pycache__
-.venv
-venv
-build
-dist
-.vscode
-.idea
-```
-
-These directories are preserved rather than analyzed and reorganized like normal files.
-
-## Installation
-
-For the Windows release, download the latest JishAtlas executable from the GitHub Releases page.
-
-You do not need to install Python separately when using the packaged executable.
-
-On first use of Local AI, JishAtlas will download the required model automatically.
-
-## Running from source
-
-If you want to run JishAtlas directly from Python:
-
-```bash
-git clone https://github.com/jishnudutta/JishAtlas.git
-cd JishAtlas
-
-python -m venv .venv
-```
-
-Activate the environment on Windows:
-
-```powershell
-.venv\Scripts\activate
-```
-
-Install the dependencies:
-
-```bash
-pip install .
-```
-
-Then run:
-
-```bash
-python main.py
-```
-
-## Building the executable
-
-The Windows release is a single-file executable built with PyInstaller from
-`JishAtlas.spec`. The spec explicitly bundles the `llama_cpp` native DLLs
-(loaded at runtime via ctypes, so static analysis alone would miss them) and
-all `google.genai` submodules.
-
-Build and test:
-
-On Windows, double-click [`build_exe.bat`](build_exe.bat). It prepares the
-build environment and creates `dist/JishAtlas.exe`. It uses a locked, separate
-`uv` build environment when available; otherwise it creates a Python 3.13
-build environment and installs the required packages. The build uses the project
-spec, which includes the llama.cpp runtime DLLs, then runs an executable
-startup smoke test to catch packaging errors.
-
-For a manual build:
-
-```bash
-# Install everything, including dev tools (pytest, PyInstaller)
-uv sync --group dev
-
-# Run the unit test suite (logic only, no model required)
-pytest
-
-# Build the single-file executable into dist/JishAtlas.exe
-pyinstaller JishAtlas.spec
-
-# Smoke-test the packaged exe itself (skips if the exe is not built)
-pytest tests/test_exe_smoke.py
-```
-
-Note: `uv sync --group dev` installs the `dev` dependency group (pytest and
-PyInstaller). If you are not using uv, run `pip install pytest pyinstaller`
-in your environment.
-
-## Gemini setup
-
-If you select the Gemini backend, JishAtlas will ask for your API key if one has not already been configured.
-
-The key is stored locally as:
-
-```text
-.env
-```
-
-Do not commit this file to Git.
-
-Your `.gitignore` should contain:
-
-```gitignore
-.env
-models/
-```
-
-## Local model storage
-
-Downloaded local models are stored outside the application directory, under the user's local application data folder.
-
-On Windows, this is typically:
-
-```text
-%LOCALAPPDATA%\JishAtlas\models\
-```
-
-This keeps the executable small and allows the model to be reused when the application is updated.
+JishAtlas is a terminal application that uses Local AI or Google Gemini to
+create file organization plans. It scans a selected directory, displays the
+proposed changes, and applies them only after confirmation.
 
 ## Requirements
 
-For Local AI, performance depends on your computer's available RAM and CPU.
+- Windows for the packaged executable
+- Python 3.13 or later to run from source
+- Internet access to use Gemini or download the Local AI model
+- A Gemini API key to use the Gemini backend
 
-The default v0.1 model is a small quantized Qwen model intended to work on relatively modest systems.
+Local AI runs on the computer. Its performance depends on available memory and
+CPU resources.
 
-Gemini requires:
+## Run the Windows executable
 
-- Internet access
-- A valid Gemini API key
+Start `dist/JishAtlas.exe`. At the folder prompt, enter the full path to the
+directory to organize, such as `C:\Users\name\Documents\Downloads`.
 
-## Current status
+Choose an AI backend and an organization mode. Review the generated plan, then
+confirm whether to apply it. The default mode creates a separate organized copy.
+The in-place mode replaces the selected directory only after a complete copy
+has been verified.
 
-JishAtlas is currently in **v0.1 Alpha**.
+At the folder prompt, enter `k` to manage the Gemini API key or `q` to quit.
+The backend menu also has an option to set or change the key.
 
-The core organization workflow is functional, but the project is still being actively developed. You should keep backups of important files when testing it, especially when using the in-place organization mode.
+## Run from source
 
-## Roadmap
+```powershell
+git clone https://github.com/jishnudutta/JishAtlas.git
+cd JishAtlas
+uv sync
+uv run python main.py
+```
 
-Future versions may include:
+Alternatively, create a Python 3.13+ virtual environment and install the
+project with `pip install .`, then run `python main.py`.
 
-- Better local models
-- Image understanding
-- More advanced content analysis
-- More organization strategies
-- Improved model management
-- Additional AI providers
-- A graphical interface
-- More extensive platform support
+## Workflow
 
-The goal is to keep JishAtlas useful without making it unnecessarily complicated.
+1. Select a directory.
+2. Scan files and folders. Text files are read as UTF-8, up to 1,200 characters
+   per file. Binary and unreadable files remain in the scan without a content
+   sample.
+3. Detect software projects and protected directories.
+4. Analyze the scan with the selected backend and display the proposed plan.
+5. Apply the plan after confirmation, either to a new copy or in place.
 
-## Contributing
+Detected projects are treated as single units: their internal files are not
+reorganized. Directories named `.git`, `node_modules`, `__pycache__`, `.venv`,
+`venv`, `build`, `dist`, `.vscode`, `.vs`, `obj`, or `.idea` are excluded from
+the scan and preserved as directories during copying.
 
-Contributions, bug reports, and suggestions are welcome.
+Before replacing the original in in-place mode, JishAtlas verifies that every
+readable source file exists in the organized copy by comparing file hashes. If
+verification or copying fails, the original directory is left in place.
 
-If you find a problem, please provide:
+## AI backends and data handling
 
-1. What you were trying to organize
-2. Which AI backend you used
-3. What happened
-4. Any relevant error message
+### Local AI
 
-Avoid sharing private files, API keys, or other sensitive information in issues.
+Local AI uses the `Qwen3-1.7B-Q4_K_M.gguf` model from
+`unsloth/Qwen3-1.7B-GGUF`. JishAtlas downloads it on first use and stores it in
+`%LOCALAPPDATA%\JishAtlas\models\` on Windows. File samples are summarized
+locally, then the scan is divided into batches to fit the model context.
+
+The context size defaults to 32,768 tokens. Set `JISHATLAS_CONTEXT_TOKENS` to
+an integer from 4,096 through 40,960 to change it. Invalid values fall back to
+the default. For source runs, this setting can be placed in the project `.env`
+file. Packaged runs can use an environment variable.
+
+### Gemini
+
+Gemini requires an internet connection and API key. The request includes the
+scanned relative paths, folder and project information, and up to 1,200
+characters of UTF-8 text content per readable file. Do not use this backend for
+folders whose contents should not be sent to Google.
+
+The API key is stored as plain text in `.env` when running from source. In the
+packaged executable, it is stored in `%LOCALAPPDATA%\JishAtlas\.env`. Keep this
+file private and do not commit it to Git. An existing `GEMINI_API_KEY`
+environment variable can also provide the key.
+
+## Build the Windows executable
+
+On Windows, double-click `build_exe.bat`. It prepares the Python build
+environment, generates the executable icon from the SVG source, builds
+`dist/JishAtlas.exe`, and runs the packaged startup smoke check. The PyInstaller
+spec collects llama.cpp native libraries required by Local AI at runtime.
+
+For a manual build with `uv`:
+
+```powershell
+uv sync --group dev
+uv run python assets/make_icon.py
+uv run pyinstaller --clean JishAtlas.spec
+uv run pytest -q --basetemp=.build-tmp/pytest tests/test_exe_smoke.py
+```
+
+The smoke check exercises executable startup and skips the Local AI end-to-end
+case when the model has not been downloaded. Run the full test suite with:
+
+```powershell
+uv run pytest -q --basetemp=.build-tmp/pytest
+```
+
+## Project files
+
+- `main.py` — terminal workflow
+- `scanner.py` — directory scanning, project detection, and Local AI setup
+- `ai_analysis.py` — prompts, validation, and backend analysis
+- `apply.py` — copy, verification, and in-place application
+- `input.py` — interactive prompts and key management
+- `JishAtlas.spec` — PyInstaller configuration
+- `build_exe.bat` — Windows build and packaged startup check
+- `assets/` — editable SVG brand assets and generated executable icon
+- `tests/` — unit and packaged executable checks
 
 ## License
 
-This project is licensed under the terms of the license included in this repository.
-
----
-
-**JishAtlas** is built around a simple idea: let AI handle the tedious part of organizing files while keeping the user in control of what actually happens to their data.
+See [LICENSE](LICENSE).
